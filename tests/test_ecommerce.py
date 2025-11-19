@@ -1,3 +1,16 @@
+"""
+[浏览器、测试工程师]
+|
+[ECommercceAPI 测试客户端]
+| HTTP
+[FastAPI 电商后端 Mock服务]
+|
+[内存数据库] products_db/carts_db
+
+启动前提： FastAPI 电商服务已经在 localhost:8000上跑着
+用ECommerceAPI封装好HTTP请求
+用pytest写了很多测试用例去测试
+"""
 import pytest
 import sys
 import os

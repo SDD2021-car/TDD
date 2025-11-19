@@ -1,7 +1,17 @@
+"""
+Created on 2016. 5. 28.
+    接口自动化测试必要模块
+    1、封装 GET、POST、PUT、DELETE方法
+    2、自动记录日志
+    3、管理回话
+    提供统一的HTTP客户端层，直接调用API
+
+"""
 import requests
 from typing import Optional, Dict, Any
 import logging
 
+# 记录日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -10,16 +20,16 @@ class APIClient:
     """封装的 HTTP 客户端"""
 
     def __init__(self, base_url: str, timeout: int = 10):
-        self.base_url = base_url.rstrip('/')
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update({
+        self.base_url = base_url.rstrip('/')    # 清除尾部‘/’
+        self.timeout = timeout                  # 默认端口超时时间 10s
+        self.session = requests.Session()       # 使用会话，提高性能，支持cookie和headers复用
+        self.session.headers.update({           # 默认请求头（HTTP中自动附带在所有请求里）
             'Content-Type': 'application/json',
             'User-Agent': 'ECommerce-Test-Client/1.0'
         })
 
     def _log_request(self, method: str, url: str, **kwargs):
-        """记录请求"""
+        """记录请求，打印请求方法和url,若有body则打印内容"""
         logger.info(f"{method.upper()} {url}")
         if 'json' in kwargs:
             logger.debug(f"Request Body: {kwargs['json']}")
@@ -32,6 +42,7 @@ class APIClient:
         except:
             logger.debug(f"Response: {response.text}")
 
+    # HTTP方法，GET、
     def get(self, endpoint: str, params: Optional[Dict] = None, **kwargs) -> requests.Response:
         """GET 请求"""
         url = f"{self.base_url}{endpoint}"

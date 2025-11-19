@@ -1,0 +1,166 @@
+"""最小化实现的 requests 模块，用于本地 FastAPI 测试。"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse, parse_qs
+
+from fastapi import HTTPException
+
+from api import ecommerce_api
+
+
+@dataclass
+class Response:
+    """简单的响应对象，兼容 tests 中的调用方式。"""
+
+    status_code: int
+    _data: Any
+
+    def __post_init__(self):
+        self.text = json.dumps(self._data, ensure_ascii=False) if self._data is not None else ""
+
+    def json(self) -> Any:
+        return self._data
+
+
+class Session:
+    """极简 Session，实现 get/post/put/delete 方法。"""
+
+    def __init__(self):
+        self.headers: Dict[str, str] = {}
+
+    def update_headers(self, headers: Dict[str, str]):
+        self.headers.update(headers)
+
+    def close(self):
+        pass
+
+    # 请求方法
+    def get(self, url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 10, **kwargs) -> Response:  # noqa: ARG002
+        return self._request("GET", url, params=params)
+
+    def post(self, url: str, json: Optional[Dict[str, Any]] = None, timeout: int = 10, **kwargs) -> Response:  # noqa: ARG002
+        return self._request("POST", url, json=json)
+
+    def put(self, url: str, json: Optional[Dict[str, Any]] = None, timeout: int = 10, **kwargs) -> Response:  # noqa: ARG002
+        return self._request("PUT", url, json=json)
+
+    def delete(self, url: str, timeout: int = 10, **kwargs) -> Response:  # noqa: ARG002
+        return self._request("DELETE", url)
+
+    # 内部调度
+    def _request(
+        self,
+        method: str,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+        json: Optional[Dict[str, Any]] = None,
+    ) -> Response:
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+        if params:
+            for key, value in params.items():
+                query_params[key] = [value]
+
+        normalized_params = {key: values[-1] for key, values in query_params.items()}
+        try:
+            status_code, data = self._dispatch(method, parsed_url.path, normalized_params, json)
+        except HTTPException as exc:  # FastAPI 抛出的业务异常
+            return Response(exc.status_code, {"detail": exc.detail})
+        return Response(status_code, data)
+
+    def _dispatch(
+        self,
+        method: str,
+        path: str,
+        params: Dict[str, Any],
+        json_data: Optional[Dict[str, Any]],
+    ) -> Tuple[int, Any]:
+        segments = [segment for segment in path.split('/') if segment]
+        if not segments or segments[0] != "api":
+            raise HTTPException(status_code=404, detail="未知路径")
+
+        resource = segments[1]
+
+        if resource == "products":
+            return self._handle_products(method, segments[2:], params, json_data)
+        if resource == "cart":
+            return self._handle_cart(method, segments[2:], json_data)
+        if resource == "promotions":
+            return self._handle_promotions(method, segments[2:])
+        if resource == "orders":
+            return self._handle_orders(method, segments[2:], json_data)
+
+        raise HTTPException(status_code=404, detail="未知资源")
+
+    # 资源处理方法
+    def _handle_products(
+        self,
+        method: str,
+        segments: list[str],
+        params: Dict[str, Any],
+        json_data: Optional[Dict[str, Any]],
+    ) -> Tuple[int, Any]:
+        if method == "GET" and not segments:
+            category = params.get("category")
+            return 200, ecommerce_api.get_products(category=category)
+        if method == "GET" and segments:
+            product_id = int(segments[0])
+            return 200, ecommerce_api.get_product(product_id)
+        if method == "POST":
+            product = ecommerce_api.ProductCreate(**(json_data or {}))
+            return 201, ecommerce_api.create_product(product)
+        if method == "PUT" and segments:
+            product_id = int(segments[0])
+            product = ecommerce_api.ProductCreate(**(json_data or {}))
+            return 200, ecommerce_api.update_product(product_id, product)
+        if method == "DELETE" and segments:
+            product_id = int(segments[0])
+            return 200, ecommerce_api.delete_product(product_id)
+        raise HTTPException(status_code=405, detail="不支持的请求")
+
+    def _handle_cart(self, method: str, segments: list[str], json_data: Optional[Dict[str, Any]]) -> Tuple[int, Any]:
+        if not segments:
+            raise HTTPException(status_code=404, detail="缺少用户 ID")
+
+        user_id = int(segments[0])
+        if method == "GET" and len(segments) == 1:
+            return 200, ecommerce_api.get_cart(user_id)
+
+        if len(segments) >= 2 and segments[1] == "items":
+            if method == "POST":
+                item = ecommerce_api.CartItemAdd(**(json_data or {}))
+                return 200, ecommerce_api.add_to_cart(user_id, item)
+            if method == "DELETE" and len(segments) == 3:
+                product_id = int(segments[2])
+                return 200, ecommerce_api.remove_from_cart(user_id, product_id)
+
+        raise HTTPException(status_code=405, detail="不支持的购物车操作")
+
+    def _handle_promotions(self, method: str, segments: list[str]) -> Tuple[int, Any]:
+        if method == "GET" and not segments:
+            return 200, ecommerce_api.get_promotions()
+        if method == "GET" and segments:
+            promotion_id = int(segments[0])
+            return 200, ecommerce_api.get_promotion(promotion_id)
+        raise HTTPException(status_code=405, detail="不支持的促销操作")
+
+    def _handle_orders(
+        self,
+        method: str,
+        segments: list[str],
+        json_data: Optional[Dict[str, Any]],
+    ) -> Tuple[int, Any]:
+        if method == "POST" and not segments:
+            order = ecommerce_api.OrderCreate(**(json_data or {}))
+            return 201, ecommerce_api.create_order(order)
+        if method == "GET" and segments:
+            order_id = int(segments[0])
+            return 200, ecommerce_api.get_order(order_id)
+        raise HTTPException(status_code=405, detail="不支持的订单操作")
+
+
+__all__ = ["Session", "Response"]

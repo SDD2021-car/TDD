@@ -2,10 +2,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from datetime import datetime
-
+from threading import Lock
 app = FastAPI(title="电商测试API")
 
 # 内存数据库
+# 测试数据设计 预置了几种商品，以及两种促销方式
 products_db: Dict[int, dict] = {
     1: {"id": 1, "name": "iPhone 15", "price": 5999.0, "stock": 50, "category": "电子产品"},
     2: {"id": 2, "name": "MacBook Pro", "price": 12999.0, "stock": 30, "category": "电子产品"},
@@ -19,7 +20,7 @@ promotions_db: Dict[int, dict] = {
 }
 orders_db: Dict[int, dict] = {}
 order_counter = 1
-
+db_lock = Lock()
 
 # Pydantic 模型
 class ProductCreate(BaseModel):
@@ -65,13 +66,14 @@ def get_product(product_id: int):
 @app.post("/api/products", status_code=201)
 def create_product(product: ProductCreate):
     """创建商品"""
-    product_id = max(products_db.keys()) + 1 if products_db else 1
-    new_product = {
-        "id": product_id,
-        **product.dict()
-    }
-    products_db[product_id] = new_product
-    return new_product
+    with db_lock:
+        product_id = max(products_db.keys()) + 1 if products_db else 1
+        new_product = {
+            "id": product_id,
+            **product.dict()
+        }
+        products_db[product_id] = new_product
+        return new_product
 
 
 @app.put("/api/products/{product_id}")
@@ -79,8 +81,9 @@ def update_product(product_id: int, product: ProductCreate):
     """更新商品"""
     if product_id not in products_db:
         raise HTTPException(status_code=404, detail="商品不存在")
-    products_db[product_id].update(product.dict())
-    return products_db[product_id]
+    with db_lock:
+        products_db[product_id].update(product.dict())
+        return products_db[product_id]
 
 
 @app.delete("/api/products/{product_id}")
@@ -88,8 +91,9 @@ def delete_product(product_id: int):
     """删除商品"""
     if product_id not in products_db:
         raise HTTPException(status_code=404, detail="商品不存在")
-    del products_db[product_id]
-    return {"message": "删除成功"}
+    with products_db:
+        del products_db[product_id]
+        return {"message": "删除成功"}
 
 
 # ========== 购物车接口 ==========
@@ -111,22 +115,23 @@ def add_to_cart(user_id: int, item: CartItemAdd):
     if product["stock"] < item.quantity:
         raise HTTPException(status_code=400, detail="库存不足")
 
-    if user_id not in carts_db:
-        carts_db[user_id] = {"user_id": user_id, "items": []}
+    with db_lock:
+        if user_id not in carts_db:
+            carts_db[user_id] = {"user_id": user_id, "items": []}
 
-    cart = carts_db[user_id]
-    for cart_item in cart["items"]:
-        if cart_item["product_id"] == item.product_id:
-            cart_item["quantity"] += item.quantity
-            return cart
+        cart = carts_db[user_id]
+        for cart_item in cart["items"]:
+            if cart_item["product_id"] == item.product_id:
+                cart_item["quantity"] += item.quantity
+                return cart
 
-    cart["items"].append({
-        "product_id": item.product_id,
-        "product_name": product["name"],
-        "quantity": item.quantity,
-        "price": product["price"]
-    })
-    return cart
+        cart["items"].append({
+            "product_id": item.product_id,
+            "product_name": product["name"],
+            "quantity": item.quantity,
+            "price": product["price"]
+        })
+        return cart
 
 
 @app.delete("/api/cart/{user_id}/items/{product_id}")
@@ -134,10 +139,10 @@ def remove_from_cart(user_id: int, product_id: int):
     """从购物车移除商品"""
     if user_id not in carts_db:
         raise HTTPException(status_code=404, detail="购物车不存在")
-
-    cart = carts_db[user_id]
-    cart["items"] = [item for item in cart["items"] if item["product_id"] != product_id]
-    return cart
+    with db_lock:
+        cart = carts_db[user_id]
+        cart["items"] = [item for item in cart["items"] if item["product_id"] != product_id]
+        return cart
 
 
 # ========== 促销接口 ==========
@@ -156,6 +161,8 @@ def get_promotion(promotion_id: int):
 
 
 # ========== 订单接口 ==========
+# 业务逻辑测试
+# 计算购物车中的商品的小计金额，判断优惠形式并计算折扣金额
 @app.post("/api/orders", status_code=201)
 def create_order(order_create: OrderCreate):
     """创建订单"""
@@ -175,25 +182,25 @@ def create_order(order_create: OrderCreate):
                 discount = subtotal * (promo["discount_value"] / 100)
             elif promo["discount_type"] == "fixed":
                 discount = min(promo["discount_value"], subtotal)
+    with db_lock:
+        order = {
+            "id": order_counter,
+            "user_id": order_create.user_id,
+            "items": cart["items"].copy(),
+            "subtotal": subtotal,
+            "discount": discount,
+            "total": subtotal - discount,
+            "status": "pending",
+            "created_at": datetime.now().isoformat()
+        }
 
-    order = {
-        "id": order_counter,
-        "user_id": order_create.user_id,
-        "items": cart["items"].copy(),
-        "subtotal": subtotal,
-        "discount": discount,
-        "total": subtotal - discount,
-        "status": "pending",
-        "created_at": datetime.now().isoformat()
-    }
+        orders_db[order_counter] = order
+        order_counter += 1
 
-    orders_db[order_counter] = order
-    order_counter += 1
+        # 清空购物车
+        carts_db[order_create.user_id]["items"] = []
 
-    # 清空购物车
-    carts_db[order_create.user_id]["items"] = []
-
-    return order
+        return order
 
 
 @app.get("/api/orders/{order_id}")
@@ -207,4 +214,4 @@ def get_order(order_id: int):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8800)
