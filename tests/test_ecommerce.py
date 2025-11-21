@@ -14,6 +14,7 @@
 import pytest
 import sys
 import os
+from typing import Callable
 
 # 添加项目路径
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -21,11 +22,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from utils.http_client import ECommerceAPI
 from models.dataclass_models import Product, CartItem, ShoppingCart, Promotion
 
+ADMIN_TOKEN = "admin-token"
+USER_TOKENS = {
+    "1001": "user-1001-token",
+    "1002": "user-1002-token",
+    "1003": "user-1003-token",
+    "2001": "user-2001-token",
+}
 
 @pytest.fixture(scope="session")
 def api():
-    """API 客户端 fixture"""
-    client = ECommerceAPI("http://localhost:8000")
+    """API 客户端 fixture, 默认管理员身份可访问公共资源"""
+    client = ECommerceAPI("http://localhost:8000", auth_token=ADMIN_TOKEN)
     yield client
     client.close()
 
@@ -35,6 +43,15 @@ def user_id():
     """测试用户 ID"""
     return 1001
 
+@pytest.fixture
+def user_token(user_id:int) -> str:
+    """当前默认测试用户的token"""
+    return USER_TOKENS[user_id]
+
+@pytest.fixture
+def token_for_user() -> Callable[[int], str]:
+    """根据用户ID获取token的便捷方法"""
+    return lambda uid: USER_TOKENS[uid]
 
 # ========== 商品测试 ==========
 class TestProducts:
@@ -119,33 +136,33 @@ class TestProducts:
 class TestShoppingCart:
     """购物车功能测试"""
 
-    def test_add_item_to_cart(self, api, user_id):
+    def test_add_item_to_cart(self, api, user_id, user_token):
         """测试添加商品到购物车"""
-        response = api.add_to_cart(user_id, product_id=1, quantity=2)
+        response = api.add_to_cart(user_id, product_id=1, quantity=2, auth_token=user_token)
         assert response.status_code == 200
         cart = response.json()
         assert cart["user_id"] == user_id
         assert len(cart["items"]) > 0
 
-    def test_add_multiple_items(self, api, user_id):
+    def test_add_multiple_items(self, api, user_id, user_token):
         """测试添加多个商品"""
-        api.add_to_cart(user_id, product_id=1, quantity=1)
-        api.add_to_cart(user_id, product_id=2, quantity=1)
+        api.add_to_cart(user_id, product_id=1, quantity=1, auth_token=user_token)
+        api.add_to_cart(user_id, product_id=2, quantity=1, auth_token=user_token)
 
-        response = api.get_cart(user_id)
+        response = api.get_cart(user_id, auth_token=user_token)
         cart = response.json()
         assert len(cart["items"]) >= 2
         assert cart["total"] > 0
 
-    def test_add_out_of_stock_item(self, api, user_id):
+    def test_add_out_of_stock_item(self, api, user_id, user_token):
         """测试添加库存不足的商品"""
-        response = api.add_to_cart(user_id, product_id=1, quantity=10000)
+        response = api.add_to_cart(user_id, product_id=1, quantity=10000, auth_token=user_token)
         assert response.status_code == 400
 
-    def test_remove_item_from_cart(self, api, user_id):
+    def test_remove_item_from_cart(self, api, user_id, user_token):
         """测试从购物车移除商品"""
-        api.add_to_cart(user_id, product_id=3, quantity=1)
-        response = api.remove_from_cart(user_id, product_id=3)
+        api.add_to_cart(user_id, product_id=3, quantity=1, auth_token=user_token)
+        response = api.remove_from_cart(user_id, product_id=3, auth_token=user_token)
         assert response.status_code == 200
 
     def test_dataclass_shopping_cart(self):
@@ -217,48 +234,51 @@ class TestPromotions:
 class TestOrders:
     """订单功能测试"""
 
-    def test_create_order_without_promotion(self, api, user_id):
+    def test_create_order_without_promotion(self, api, user_id, user_token):
         """测试创建无促销订单"""
         # 先添加商品到购物车
-        api.add_to_cart(user_id, product_id=1, quantity=1)
+        api.add_to_cart(user_id, product_id=1, quantity=1, auth_token=user_token)
 
         # 创建订单
-        response = api.create_order(user_id)
+        response = api.create_order(user_id, auth_token=user_token)
         assert response.status_code == 201
         order = response.json()
         assert order["user_id"] == user_id
         assert order["total"] == order["subtotal"]  # 无折扣
         assert order["status"] == "pending"
 
-    def test_create_order_with_promotion(self, api):
+    def test_create_order_with_promotion(self, api, token_for_user):
         """测试创建带促销的订单"""
         user_id = 1002
-
+        user_token = token_for_user(user_id)
         # 添加商品到购物车
-        api.add_to_cart(user_id, product_id=2, quantity=1)  # 12999元商品
+        api.add_to_cart(user_id, product_id=2, quantity=1, auth_token=user_token)  # 12999元商品
 
         # 使用促销创建订单
-        response = api.create_order(user_id, promotion_id=1)  # 满1000减100
+        response = api.create_order(user_id, promotion_id=1, auth_token=user_token)  # 满1000减100
         assert response.status_code == 201
         order = response.json()
         assert order["discount"] > 0
         assert order["total"] < order["subtotal"]
 
-    def test_get_order(self, api):
+    def test_get_order(self, api, token_for_user):
         """测试获取订单"""
         user_id = 1003
-        api.add_to_cart(user_id, product_id=3, quantity=1)
-        create_response = api.create_order(user_id)
+        user_token = token_for_user(user_id)
+        api.add_to_cart(user_id, product_id=3, quantity=1, auth_token=user_token)
+        create_response = api.create_order(user_id, auth_token=user_token)
         order_id = create_response.json()["id"]
 
-        response = api.get_order(order_id)
+        response = api.get_order(order_id, auth_token=user_token)
         assert response.status_code == 200
         order = response.json()
         assert order["id"] == order_id
 
-    def test_create_order_empty_cart(self, api):
+    def test_create_order_empty_cart(self, api, token_for_user):
         """测试空购物车创建订单"""
-        response = api.create_order(9999)
+        user_id = 1002
+        user_token = token_for_user(user_id)
+        response = api.create_order(user_id, auth_token=user_token)
         assert response.status_code == 400
 
 
@@ -266,30 +286,30 @@ class TestOrders:
 class TestIntegration:
     """端到端集成测试"""
 
-    def test_complete_shopping_flow(self, api):
+    def test_complete_shopping_flow(self, api, token_for_user):
         """测试完整购物流程"""
         user_id = 2001
-
+        user_token = token_for_user(user_id)
         # 1. 浏览商品
-        products_response = api.get_products()
+        products_response = api.get_products(auth_token=user_token)
         assert products_response.status_code == 200
 
         # 2. 添加商品到购物车
-        api.add_to_cart(user_id, product_id=1, quantity=2)
-        api.add_to_cart(user_id, product_id=3, quantity=1)
+        api.add_to_cart(user_id, product_id=1, quantity=2, auth_token=user_token)
+        api.add_to_cart(user_id, product_id=3, quantity=1, auth_token=user_token)
 
         # 3. 查看购物车
-        cart_response = api.get_cart(user_id)
+        cart_response = api.get_cart(user_id, auth_token=user_token)
         assert cart_response.status_code == 200
         cart = cart_response.json()
         assert len(cart["items"]) == 2
 
         # 4. 查看促销
-        promotions_response = api.get_promotions()
+        promotions_response = api.get_promotions(auth_token=user_token)
         assert promotions_response.status_code == 200
 
         # 5. 创建订单
-        order_response = api.create_order(user_id, promotion_id=2)
+        order_response = api.create_order(user_id, promotion_id=2, auth_token=user_token)
         assert order_response.status_code == 201
         order = order_response.json()
 
@@ -298,5 +318,5 @@ class TestIntegration:
         assert "created_at" in order
 
         # 7. 验证购物车已清空
-        cart_after = api.get_cart(user_id).json()
+        cart_after = api.get_cart(user_id, auth_token=user_token).json()
         assert len(cart_after["items"]) == 0
