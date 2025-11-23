@@ -1,11 +1,11 @@
 from typing import List, Dict, Optional
 from datetime import datetime
 from threading import Lock
-from fastapi import FastAPI, HTTPException, status, Depends
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, status
+
 """
-电商测试API，实现基础的商品、购物车、促销和订单接口
+电商测试API，实现基础的商品、购物车、促销和订单接口1
 实现简单的鉴权与鉴权检查，防止用户越权访问其他用户的资源，同时限制敏感操作例如商品管理，仅管理员可用
 """
 app = FastAPI(title="电商测试API")
@@ -25,18 +25,16 @@ promotions_db: Dict[int, dict] = {
 }
 orders_db: Dict[int, dict] = {}
 order_counter = 1
-db_lock = Lock()
-
 # 设置简单的用户与令牌映射，便于接口鉴权演示
 users_db: Dict[str, dict] = {
-    "admin-token": {"user_id" : 1, "role": "admin", "name": "Admin"},
-    "user-1001-token": {"user_id" : 1001, "role": "user", "name": "Test User 1001"},
-    "user-1002-token": {"user_id" : 1002, "role": "user", "name": "Test User 1002"},
-    "user-1003-token": {"user_id" : 1003, "role": "user", "name": "Test User 1003"},
-    "user-2001-token": {"user_id" : 2001, "role": "user", "name": "Test User 2001"},
+    "admin-token": {"user_id": 1, "role": "admin", "name": "Admin"},
+    "user-1001-token": {"user_id": 1001, "role": "user", "name": "Test User 1001"},
+    "user-1002-token": {"user_id": 1002, "role": "user", "name": "Test User 1002"},
+    "user-1003-token": {"user_id": 1003, "role": "user", "name": "Test User 1003"},
+    "user-2001-token": {"user_id": 2001, "role": "user", "name": "Test User 2001"},
 }
-# HTTP Bearer 安全方案
-bearer_scheme = HTTPBearer(auto_error=False)
+
+db_lock = Lock()
 
 # Pydantic 模型
 class ProductCreate(BaseModel):
@@ -44,6 +42,7 @@ class ProductCreate(BaseModel):
     price: float
     stock: int
     category: str
+
 
 class CartItemAdd(BaseModel):
     product_id: int
@@ -55,17 +54,16 @@ class OrderCreate(BaseModel):
     promotion_id: Optional[int] = None
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> dict:
+def get_current_user(token: Optional[str]) -> dict:
     """
-        根据Authorization Bearer Token 获取当前用户信息
+        根据Bearer Token 获取当前用户信息
         当token无效或缺失，抛出401，确保所有业务接口都有身份凭证
     """
-    if not credentials:
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="missing authentication information",
         )
-    token = credentials.credentials
     if token not in users_db:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,7 +71,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_
         )
     return users_db[token]
 
-def ensure_admin(current_user:dict) -> dict:
+
+def ensure_admin(current_user: dict) -> dict:
     """仅允许管理员执行的操作，非管理员抛出异常403"""
     if current_user.get("role") != "admin":
         raise HTTPException(
@@ -81,7 +80,8 @@ def ensure_admin(current_user:dict) -> dict:
             detail="need admin role",
         )
 
-def ensure_owner_or_admin(target_user_id:int, current_user:dict) -> None:
+
+def ensure_owner_or_admin(target_user_id: int, current_user: dict) -> None:
     """确保访问的user_id与当前用户匹配，或当前用户为管理员"""
     if current_user.get("role") == "admin":
         return
@@ -91,17 +91,17 @@ def ensure_owner_or_admin(target_user_id:int, current_user:dict) -> None:
             detail="you are not allowed to access this resource",
         )
 
+
 # ========== 商品接口 ==========
-@app.get("/")
-def root(current_user:dict = Depends(get_current_user)):
-    return {"message": "电商测试API运行中", "version": "1.0", "user": current_user.get("name")}
 
 @app.get("/api/products")
 def get_products(
         category: Optional[str] = None,
-        current_user:dict = Depends(get_current_user),
+        current_user: Optional[dict] = None,
 ):
     """获取商品列表"""
+    if current_user is None:
+        current_user = get_current_user(None)
     products = list(products_db.values())
     if category:
         products = [p for p in products if p["category"] == category]
@@ -111,30 +111,32 @@ def get_products(
 @app.get("/api/products/{product_id}")
 def get_product(
         product_id: int,
-        current_user:dict = Depends(get_current_user),
+        current_user: dict = Depends(get_current_user),
 ):
     """获取单个商品"""
+    if current_user is None:
+        current_user = get_current_user(None)
     if product_id not in products_db:
         raise HTTPException(status_code=404, detail="商品不存在")
     return products_db[product_id]
 
 
 @app.post("/api/products", status_code=201)
-def create_product(product: ProductCreate, current_user:dict = Depends(get_current_user)):
+def create_product(product: ProductCreate, current_user: dict):
     """创建商品"""
     ensure_admin(current_user)
     with db_lock:
         product_id = max(products_db.keys()) + 1 if products_db else 1
         new_product = {
             "id": product_id,
-            **product.dict()
+            **product.dict(),
         }
         products_db[product_id] = new_product
         return new_product
 
 
 @app.put("/api/products/{product_id}")
-def update_product(product_id: int, product: ProductCreate, current_user:dict = Depends(get_current_user)):
+def update_product(product_id: int, product: ProductCreate, current_user: dict):
     """更新商品"""
     ensure_admin(current_user)
     if product_id not in products_db:
@@ -145,7 +147,7 @@ def update_product(product_id: int, product: ProductCreate, current_user:dict = 
 
 
 @app.delete("/api/products/{product_id}")
-def delete_product(product_id: int, current_user:dict = Depends(get_current_user)):
+def delete_product(product_id: int, current_user: dict):
     """删除商品"""
     ensure_admin(current_user)
     if product_id not in products_db:
@@ -157,15 +159,16 @@ def delete_product(product_id: int, current_user:dict = Depends(get_current_user
 
 # ========== 购物车接口 ==========
 @app.get("/api/cart/{user_id}")
-def get_cart(user_id: int, current_user: dict = Depends(get_current_user)):
+def get_cart(user_id: int, current_user: dict):
     """获取购物车"""
     ensure_owner_or_admin(user_id, current_user)
     cart = carts_db.get(user_id, {"user_id": user_id, "items": []})
     total = sum(item["quantity"] * item["price"] for item in cart["items"])
     return {**cart, "total": total}
 
+
 @app.post("/api/cart/{user_id}/items")
-def add_to_cart(user_id: int, item: CartItemAdd, current_user:dict = Depends(get_current_user),):
+def add_to_cart(user_id: int, item: CartItemAdd, current_user: dict):
     """添加商品到购物车"""
     ensure_owner_or_admin(user_id, current_user)
     if item.product_id not in products_db:
@@ -189,31 +192,35 @@ def add_to_cart(user_id: int, item: CartItemAdd, current_user:dict = Depends(get
             "product_id": item.product_id,
             "product_name": product["name"],
             "quantity": item.quantity,
-            "price": product["price"]
+            "price": product["price"],
         })
         return cart
 
 
 @app.delete("/api/cart/{user_id}/items/{product_id}")
-def remove_from_cart(user_id: int, product_id: int, current_user:dict = Depends(get_current_user),):
+def remove_from_cart(user_id: int, product_id: int, current_user: dict):
     """从购物车移除商品"""
     ensure_owner_or_admin(user_id, current_user)
     if user_id not in carts_db:
         raise HTTPException(status_code=404, detail="购物车不存在")
-    with db_lock:
-        cart = carts_db[user_id]
-        cart["items"] = [item for item in cart["items"] if item["product_id"] != product_id]
-        return cart
+    cart = carts_db[user_id]
+    for index, item in enumerate(cart["items"]):
+        if item["product_id"] == product_id:
+            cart["items"].pop(index)
+            return
+
+    return HTTPException(status_code=404, detail="Product not found in the cart")
 
 
 # ========== 促销接口 ==========
 @app.get("/api/promotions")
-def get_promotions(current_user:dict = Depends(get_current_user)):
+def get_promotions(current_user: dict):
     """获取促销列表"""
     return {"promotions": list(promotions_db.values())}
 
+
 @app.get("/api/promotions/{promotion_id}")
-def get_promotion(promotion_id: int, current_user:dict = Depends(get_current_user)):
+def get_promotion(promotion_id: int, current_user: dict):
     """获取促销详情"""
     if promotion_id not in promotions_db:
         raise HTTPException(status_code=404, detail="促销不存在")
@@ -224,58 +231,87 @@ def get_promotion(promotion_id: int, current_user:dict = Depends(get_current_use
 # 业务逻辑测试
 # 计算购物车中的商品的小计金额，判断优惠形式并计算折扣金额
 @app.post("/api/orders", status_code=201)
-def create_order(order_create: OrderCreate, current_user:dict = Depends(get_current_user)):
+def create_order(order: OrderCreate, current_user: dict = Depends(get_current_user)):
     """创建订单"""
-    global order_counter
+    ensure_owner_or_admin(order.user_id, current_user)
 
-    ensure_owner_or_admin(order_create.user_id, current_user)
-
-    if order_create.user_id not in carts_db or not carts_db[order_create.user_id]["items"]:
+    if order.user_id not in carts_db or not carts_db[order.user_id]["items"]:
         raise HTTPException(status_code=400, detail="购物车为空")
 
-    cart = carts_db[order_create.user_id]
+    cart = carts_db[order.user_id]
     subtotal = sum(item["quantity"] * item["price"] for item in cart["items"])
 
     discount = 0.0
-    if order_create.promotion_id and order_create.promotion_id in promotions_db:
-        promo = promotions_db[order_create.promotion_id]
+    if order.promotion_id and order.promotion_id in promotions_db:
+        promo = promotions_db[order.promotion_id]
         if subtotal >= promo["min_amount"]:
             if promo["discount_type"] == "percentage":
                 discount = subtotal * (promo["discount_value"] / 100)
             elif promo["discount_type"] == "fixed":
                 discount = min(promo["discount_value"], subtotal)
+
+    total = max(subtotal - discount, 0)
+    global order_counter
     with db_lock:
-        order = {
+        order_id = order_counter
+        order_counter += 1
+        new_order = {
             "id": order_counter,
-            "user_id": order_create.user_id,
+            "user_id": order.user_id,
             "items": cart["items"].copy(),
             "subtotal": subtotal,
             "discount": discount,
-            "total": subtotal - discount,
+            "total": total,
             "status": "pending",
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.utcnow().isoformat()
         }
 
-        orders_db[order_counter] = order
-        order_counter += 1
-
+        orders_db[order_id] = new_order
         # 清空购物车
-        carts_db[order_create.user_id]["items"] = []
-
-        return order
+        carts_db[order.user_id] = {"user_id": order.user_id, "items": []}
+        return new_order
 
 
 @app.get("/api/orders/{order_id}")
-def get_order(order_id: int, current_user:dict = Depends(get_current_user)):
+def get_order(order_id: int, current_user: dict):
     """获取订单详情"""
     if order_id not in orders_db:
         raise HTTPException(status_code=404, detail="订单不存在")
     order = orders_db[order_id]
     ensure_owner_or_admin(order["user_id"], current_user)
-    return orders_db[order_id]
+    return order
 
 
-if __name__ == "__main__":
-    import uvicorn
+def calculate_discount(amount: float, promotion: Dict) -> float:
+    """根据促销类型计算折扣"""
+    discount_type = promotion["discount_type"]
+    discount_value = promotion["discount_value"]
+    min_amount = promotion.get("min_amount", 0)
+    if amount < min_amount:
+        return 0.0
+    if discount_type == "percentage":
+        return amount * promotion["discount_value"] / 100
+    if discount_type == "fixed":
+        return min(discount_value, amount)
+    return 0.0
 
-    uvicorn.run(app, host="127.0.0.1", port=8800)
+
+__all__: List[str] = [
+    "ProductCreate",
+    "CartItemAdd",
+    "OrderCreate",
+    "get_current_user",
+    "get_products",
+    "get_product",
+    "create_product",
+    "update_product",
+    "delete_product",
+    "get_cart",
+    "add_to_cart",
+    "remove_from_cart",
+    "get_promotion",
+    "get_promotions",
+    "create_order",
+    "get_order",
+    "HTTPException",
+]

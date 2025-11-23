@@ -21,10 +21,10 @@ class APIClient:
 
     def __init__(self, base_url: str, timeout: int = 10, auth_token: Optional[str] = None):
         """初始化HTTP客户端，支持默认的Bear Token认证"""
-        self.base_url = base_url.rstrip('/')    # 清除尾部‘/’
-        self.timeout = timeout                  # 默认端口超时时间 10s
-        self.session = requests.Session()       # 使用会话，提高性能，支持cookie和headers复用
-        self.session.headers.update({           # 默认请求头（HTTP中自动附带在所有请求里）
+        self.base_url = base_url.rstrip('/')  # 清除尾部‘/’
+        self.timeout = timeout  # 默认端口超时时间 10s
+        self.session = requests.Session()  # 使用会话，提高性能，支持cookie和headers复用
+        self.session.headers.update({  # 默认请求头（HTTP中自动附带在所有请求里）
             'Content-Type': 'application/json',
             'User-Agent': 'ECommerce-Test-Client/1.0'
         })
@@ -48,46 +48,49 @@ class APIClient:
 
     def _build_headers(self, auth_token: Optional[str] = None) -> Dict[str, str]:
         """生成包含可选认证信息的请求头，支持临时覆盖默认token"""
-        headers:Dict[str, str] = {}
+        headers: Dict[str, str] = {}
         token = auth_token or self.auth_token
-        if token:
+        if token:  # 更新请求头
             headers['Authorization'] = f'Bearer {token}'
         return headers
 
     # HTTP方法，GET、
-    def get(self, endpoint: str, params: Optional[Dict] = None, auth_token: Optional[str] = None, **kwargs) -> requests.Response:
+    def get(self, endpoint: str, params: Optional[Dict] = None, auth_token: Optional[str] = None,
+            **kwargs) -> requests.Response:
         """GET 请求"""
         url = f"{self.base_url}{endpoint}"
         self._log_request('GET', url, params=params)
-        headers = {** self._build_headers(auth_token=auth_token), **kwargs.pop('headers',{})}
-        response = self.session.get(url, params=params, timeout=self.timeout, headers = headers, **kwargs)
+        headers = {**self._build_headers(auth_token=auth_token), **kwargs.pop('headers', {})}
+        response = self.session.get(url, params=params, timeout=self.timeout, headers=headers, **kwargs)
         self._log_response(response)
         return response
 
-    def post(self, endpoint: str, json: Optional[Dict] = None, auth_token: Optional[str] = None, **kwargs) -> requests.Response:
+    def post(self, endpoint: str, json: Optional[Dict] = None, auth_token: Optional[str] = None,
+             **kwargs) -> requests.Response:
         """POST 请求"""
         url = f"{self.base_url}{endpoint}"
         self._log_request('POST', url, json=json)
-        headers = {** self._build_headers(auth_token), **kwargs.pop('headers',{})}
-        response = self.session.post(url, json=json, timeout=self.timeout, headers = headers, **kwargs)
+        headers = {**self._build_headers(auth_token), **kwargs.pop('headers', {})}
+        response = self.session.post(url, json=json, timeout=self.timeout, headers=headers, **kwargs)
         self._log_response(response)
         return response
 
-    def put(self, endpoint: str, json: Optional[Dict] = None, auth_token: Optional[str] = None, **kwargs) -> requests.Response:
+    def put(self, endpoint: str, json: Optional[Dict] = None, auth_token: Optional[str] = None,
+            **kwargs) -> requests.Response:
         """PUT 请求"""
         url = f"{self.base_url}{endpoint}"
         self._log_request('PUT', url, json=json)
-        headers = {** self._build_headers(auth_token), **kwargs.pop('headers',{})}
-        response = self.session.put(url, json=json, timeout=self.timeout, headers = headers, **kwargs)
+        headers = {**self._build_headers(auth_token), **kwargs.pop('headers', {})}
+        response = self.session.put(url, json=json, timeout=self.timeout, headers=headers, **kwargs)
         self._log_response(response)
         return response
 
-    def delete(self, endpoint: str, auth_token: Optional[str] = None,**kwargs) -> requests.Response:
+    def delete(self, endpoint: str, auth_token: Optional[str] = None, **kwargs) -> requests.Response:
         """DELETE 请求"""
         url = f"{self.base_url}{endpoint}"
         self._log_request('DELETE', url)
-        headers = {** self._build_headers(auth_token), **kwargs.pop('headers',{})}
-        response = self.session.delete(url, timeout=self.timeout, headers = headers, **kwargs)
+        headers = {**self._build_headers(auth_token), **kwargs.pop('headers', {})}
+        response = self.session.delete(url, timeout=self.timeout, headers=headers, **kwargs)
         self._log_response(response)
         return response
 
@@ -101,15 +104,15 @@ class ECommerceAPI:
 
     def __init__(self, base_url: str = "http://localhost:8000", auth_token: Optional[str] = None):
         """初始化电商API客户端，支持注入默认认证token"""
-        self.client = APIClient(base_url, auth_token = auth_token)
+        self.client = APIClient(base_url, auth_token=auth_token)
 
     # 商品相关
     def get_products(self, category: Optional[str] = None, auth_token: Optional[str] = None):
         params = {"category": category} if category else None
-        return self.client.get("/api/products", params=params, auth_token = auth_token)
+        return self.client.get("/api/products", params=params, auth_token=auth_token)
 
     def get_product(self, product_id: int, auth_token: Optional[str] = None):
-        return self.client.get(f"/api/products/{product_id}", auth_token = auth_token)
+        return self.client.get(f"/api/products/{product_id}", auth_token=auth_token)
 
     def create_product(self, name: str, price: float, stock: int, category: str, auth_token: Optional[str] = None):
         data = {
@@ -118,40 +121,41 @@ class ECommerceAPI:
             "stock": stock,
             "category": category
         }
-        return self.client.post("/api/products", json=data, auth_token = auth_token)
+        return self.client.post("/api/products", json=data, auth_token=auth_token)
 
-    def update_product(self, product_id: int, name: str, price: float, stock: int, category: str, auth_token: Optional[str] = None):
+    def update_product(self, product_id: int, name: str, price: float, stock: int, category: str,
+                       auth_token: Optional[str] = None):
         data = {
             "name": name,
             "price": price,
             "stock": stock,
             "category": category
         }
-        return self.client.put(f"/api/products/{product_id}", json=data, auth_token = auth_token)
+        return self.client.put(f"/api/products/{product_id}", json=data, auth_token=auth_token)
 
     def delete_product(self, product_id: int, auth_token: Optional[str] = None):
-        return self.client.delete(f"/api/products/{product_id}", auth_token = auth_token)
+        return self.client.delete(f"/api/products/{product_id}", auth_token=auth_token)
 
     # 购物车相关
     def get_cart(self, user_id: int, auth_token: Optional[str] = None):
-        return self.client.get(f"/api/cart/{user_id}", auth_token = auth_token)
+        return self.client.get(f"/api/cart/{user_id}", auth_token=auth_token)
 
     def add_to_cart(self, user_id: int, product_id: int, quantity: int, auth_token: Optional[str] = None):
         data = {
             "product_id": product_id,
             "quantity": quantity
         }
-        return self.client.post(f"/api/cart/{user_id}/items", json=data, auth_token = auth_token)
+        return self.client.post(f"/api/cart/{user_id}/items", json=data, auth_token=auth_token)
 
     def remove_from_cart(self, user_id: int, product_id: int, auth_token: Optional[str] = None):
-        return self.client.delete(f"/api/cart/{user_id}/items/{product_id}", auth_token = auth_token)
+        return self.client.delete(f"/api/cart/{user_id}/items/{product_id}", auth_token=auth_token)
 
     # 促销相关
     def get_promotions(self, auth_token: Optional[str] = None):
-        return self.client.get("/api/promotions", auth_token = auth_token)
+        return self.client.get("/api/promotions", auth_token=auth_token)
 
     def get_promotion(self, promotion_id: int, auth_token: Optional[str] = None):
-        return self.client.get(f"/api/promotions/{promotion_id}", auth_token = auth_token)
+        return self.client.get(f"/api/promotions/{promotion_id}", auth_token=auth_token)
 
     # 订单相关
     def create_order(self, user_id: int, promotion_id: Optional[int] = None, auth_token: Optional[str] = None):
@@ -159,10 +163,10 @@ class ECommerceAPI:
             "user_id": user_id,
             "promotion_id": promotion_id
         }
-        return self.client.post("/api/orders", json=data, auth_token = auth_token)
+        return self.client.post("/api/orders", json=data, auth_token=auth_token)
 
     def get_order(self, order_id: int, auth_token: Optional[str] = None):
-        return self.client.get(f"/api/orders/{order_id}", auth_token = auth_token)
+        return self.client.get(f"/api/orders/{order_id}", auth_token=auth_token)
 
     def close(self):
         self.client.close()

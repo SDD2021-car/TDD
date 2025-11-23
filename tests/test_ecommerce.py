@@ -11,6 +11,7 @@
 用ECommerceAPI封装好HTTP请求
 用pytest写了很多测试用例去测试
 """
+# pytest -q
 import pytest
 import sys
 import os
@@ -24,15 +25,16 @@ from models.dataclass_models import Product, CartItem, ShoppingCart, Promotion
 
 ADMIN_TOKEN = "admin-token"
 USER_TOKENS = {
-    "1001": "user-1001-token",
-    "1002": "user-1002-token",
-    "1003": "user-1003-token",
-    "2001": "user-2001-token",
+    1001: "user-1001-token",
+    1002: "user-1002-token",
+    1003: "user-1003-token",
+    2001: "user-2001-token",
 }
+
 
 @pytest.fixture(scope="session")
 def api():
-    """API 客户端 fixture, 默认管理员身份可访问公共资源"""
+    """API 全局客户端 fixture, 默认管理员身份可访问公共资源"""
     client = ECommerceAPI("http://localhost:8000", auth_token=ADMIN_TOKEN)
     yield client
     client.close()
@@ -43,15 +45,18 @@ def user_id():
     """测试用户 ID"""
     return 1001
 
+
 @pytest.fixture
-def user_token(user_id:int) -> str:
+def user_token(user_id: int) -> str:
     """当前默认测试用户的token"""
     return USER_TOKENS[user_id]
+
 
 @pytest.fixture
 def token_for_user() -> Callable[[int], str]:
     """根据用户ID获取token的便捷方法"""
     return lambda uid: USER_TOKENS[uid]
+
 
 # ========== 商品测试 ==========
 class TestProducts:
