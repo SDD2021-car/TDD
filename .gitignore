@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+coverage_html/*
+!coverage_html/.gitkeep
+report.html
+coverage.json
