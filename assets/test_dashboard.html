@@ -1,0 +1,89 @@
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>电商 API 可视化测试面板</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body { margin: 24px; }
+        .card { border: 1px solid #ccc; padding: 16px; margin-bottom: 16px; border-radius: 8px; background: #fafafa; }
+        .card h2 { margin-top: 0; }
+        .row { display: flex; gap: 12px; margin-bottom: 8px; }
+        label { min-width: 120px; display: inline-block; }
+        input { padding: 6px; width: 240px; }
+        button { padding: 8px 12px; cursor: pointer; }
+        pre { background: #111; color: #0f0; padding: 12px; overflow-x: auto; }
+        .badge { display: inline-block; padding: 6px 10px; border-radius: 12px; color: #fff; font-weight: bold; }
+        .badge.success { background: #28a745; }
+        .badge.error { background: #c0392b; }
+    </style>
+</head>
+<body>
+<h1>电商 API 可视化测试面板</h1>
+<div class="card">
+    <h2>鉴权</h2>
+    <div class="row"><label>用户名</label><input id="username" value="admin"></div>
+    <div class="row"><label>密码</label><input id="password" value="adminpass" type="password"></div>
+    <button onclick="login()">获取 JWT Token</button>
+    <p>当前 Token: <code id="token-display">(未登录)</code></p>
+</div>
+<div class="card">
+    <h2>快速接口测试</h2>
+    <div class="row"><label>过滤分类</label><input id="category" placeholder="电子产品"></div>
+    <button onclick="fetchProducts()">获取商品列表</button>
+    <pre id="products-output">等待请求...</pre>
+</div>
+<div class="card">
+    <h2>一键运行测试与覆盖率</h2>
+    <button onclick="runTests()">运行 pytest + 覆盖率</button>
+    <p>最新覆盖率：<span id="coverage" class="badge">未知</span></p>
+    <p>覆盖率报告：<a id="coverage-link" href="/coverage/index.html" target="_blank">/coverage/index.html</a></p>
+    <pre id="test-output">等待执行...</pre>
+</div>
+<script>
+let token = '';
+
+async function login() {
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const res = await fetch('/api/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+    });
+    if (res.ok) {
+        const data = await res.json();
+        token = data.access_token;
+        document.getElementById('token-display').textContent = token;
+        document.getElementById('coverage').className = 'badge success';
+    } else {
+        const err = await res.json();
+        document.getElementById('token-display').textContent = JSON.stringify(err);
+        document.getElementById('coverage').className = 'badge error';
+    }
+}
+
+async function fetchProducts() {
+    const category = document.getElementById('category').value;
+    const params = category ? `?category=${encodeURIComponent(category)}` : '';
+    const res = await fetch(`/api/products${params}`, { headers: { Authorization: `Bearer ${token}` } });
+    const output = document.getElementById('products-output');
+    output.textContent = JSON.stringify(await res.json(), null, 2);
+}
+
+async function runTests() {
+    const output = document.getElementById('test-output');
+    output.textContent = '运行中...';
+    const res = await fetch('/api/tests/run', { method: 'POST' });
+    const body = await res.json();
+    if (res.ok) {
+        document.getElementById('coverage').textContent = body.coverage_percent || '未知';
+        document.getElementById('coverage').className = 'badge success';
+    } else {
+        document.getElementById('coverage').textContent = '执行失败';
+        document.getElementById('coverage').className = 'badge error';
+    }
+    output.textContent = JSON.stringify(body, null, 2);
+}
+</script>
+</body>
+</html>

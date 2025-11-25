@@ -53,7 +53,7 @@ fi
 
 # 运行测试
 echo -e "${YELLOW}[3/4] 运行自动化测试...${NC}"
-pytest tests/ -v --tb=short --html=report.html --self-contained-html
+pytest tests/ -v --tb=short --cov=api --cov=utils -cov=models --html=report.html --self-contained-html
 
 TEST_EXIT_CODE=$?
 
