@@ -36,11 +36,14 @@ SECRET_KEY = "test-secret-key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 24*60
 bearer_scheme = HTTPBearer(auto_error=False)
+global_lock = Lock()
+product_locks: Dict[int, Lock] = {}
+product_lock_manager = Lock()
 
 BASE_PRODUCTS: Dict[int, dict] = {
-    1: {"id": 1, "name": "iPhone 15", "price": 5999.0, "stock": 50, "category": "电子产品"},
-    2: {"id": 2, "name": "MacBook Pro", "price": 12999.0, "stock": 30, "category": "电子产品"},
-    3: {"id": 3, "name": "AirPods Pro", "price": 1899.0, "stock": 100, "category": "配件"},
+    1: {"id": 1, "name": "iPhone 15", "price": 5999.0, "stock": 50, "reserved": 0, "category": "电子产品"},
+    2: {"id": 2, "name": "MacBook Pro", "price": 12999.0, "stock": 30, "reserved": 0, "category": "电子产品"},
+    3: {"id": 3, "name": "AirPods Pro", "price": 1899.0, "stock": 100, "reserved": 0, "category": "配件"},
 }
 products_db: Dict[int, dict] = {pid: product.copy() for pid, product in BASE_PRODUCTS.items()}
 
@@ -89,6 +92,12 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
 
+def _get_product_lock(product_id:int) -> Lock:
+    """获取商品级锁， 确保锁字典的线程安全创建"""
+    with product_lock_manager:
+        if product_id not in product_locks:
+            product_locks[product_id] = Lock()
+        return product_locks[product_id]
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
@@ -208,10 +217,12 @@ def get_product(
 def create_product(product: ProductCreate, current_user: dict = Depends(get_current_user)):
     """创建商品"""
     ensure_admin(current_user)
-    product_id = max(products_db.keys()) + 1 if products_db else 1
-    new_product = {"id": product_id, **product.model_dump()}
-    products_db[product_id] = new_product
-    return new_product
+    with global_lock:
+        product_id = max(products_db.keys()) + 1 if products_db else 1
+        new_product = {"id": product_id, **product.model_dump()}
+        products_db[product_id] = new_product
+        product_locks.setdefault(product_id, Lock())
+        return new_product
 
 
 @app.put("/api/products/{product_id}")
@@ -250,27 +261,30 @@ def get_cart(user_id: int, current_user: dict = Depends(get_current_user)):
 def add_to_cart(user_id: int, item: CartItemAdd, current_user: dict = Depends(get_current_user)):
     """添加商品到购物车"""
     ensure_owner_or_admin(user_id, current_user)
-    if item.product_id not in products_db:
-        raise HTTPException(status_code=404, detail="商品不存在")
+    with global_lock, _get_product_lock(item.product_id):
+        if item.product_id not in products_db:
+            raise HTTPException(status_code=404, detail="商品不存在")
 
-    product = products_db[item.product_id]
-    if product["stock"] < item.quantity:
-        raise HTTPException(status_code=400, detail="库存不足")
-
-    carts_db.setdefault(user_id, {"user_id": user_id, "items": []})
-    cart = carts_db[user_id]
-    for cart_item in cart["items"]:
-        if cart_item["product_id"] == item.product_id:
-            cart_item["quantity"] += item.quantity
-            break
-    else:
-        cart["items"].append({
-            "product_id": item.product_id,
-            "product_name": product["name"],
-            "quantity": item.quantity,
-            "price": product["price"],
-        })
-    return cart
+        product = products_db[item.product_id]
+        reserved = product.get("reserved", 0)
+        available_stock = product["stock"] - reserved
+        if available_stock < item.quantity:
+            raise HTTPException(status_code=400, detail="库存不足")
+        carts_db.setdefault(user_id, {"user_id": user_id, "items": []})
+        cart = carts_db[user_id]
+        for cart_item in cart["items"]:
+            if cart_item["product_id"] == item.product_id:
+                cart_item["quantity"] += item.quantity
+                break
+        else:
+            cart["items"].append({
+                "product_id": item.product_id,
+                "product_name": product["name"],
+                "quantity": item.quantity,
+                "price": product["price"],
+            })
+        product["reserved"] = reserved + item.quantity
+        return cart
 
 
 @app.delete("/api/cart/{user_id}/items/{product_id}")
@@ -280,10 +294,15 @@ def remove_from_cart(user_id: int, product_id: int, current_user: dict = Depends
     if user_id not in carts_db:
         raise HTTPException(status_code=404, detail="购物车不存在")
     cart = carts_db[user_id]
-    for index, item in enumerate(cart["items"]):
-        if item["product_id"] == product_id:
-            cart["items"].pop(index)
-            return cart
+    with global_lock, _get_product_lock(product_id):
+        for index, item in enumerate(cart["items"]):
+            if item["product_id"] == product_id:
+                cart_item = cart["items"].pop(index)
+                product = products_db.get(product_id)
+                if product:
+                    reserved = product.get("reserved", 0)
+                    product["reserved"] = max(reserved - cart_item["quantity"], 0)
+                return cart
 
     raise HTTPException(status_code=404, detail="Product not found in the cart")
 
@@ -311,40 +330,63 @@ def create_order(order: OrderCreate, current_user: dict = Depends(get_current_us
     """创建订单"""
     ensure_owner_or_admin(order.user_id, current_user)
 
-    if order.user_id not in carts_db or not carts_db[order.user_id]["items"]:
+    cart = carts_db.get(order.user_id)
+    if cart is None or not cart.get("items"):
         raise HTTPException(status_code=400, detail="购物车为空")
+    product_ids = [item["product_id"] for item in cart["items"]]
 
-    cart = carts_db[order.user_id]
-    subtotal = sum(item["quantity"] * item["price"] for item in cart["items"])
+    with global_lock:
+        locks = [_get_product_lock(pid) for pid in sorted(set(product_ids))]
+        for lock in locks:
+            lock.acquire()
+        try:
+            # 校验库存并计算价格
+            subtotal = 0.0
+            for cart_item in cart["items"]:
+                product = products_db.get(cart_item["product_id"])
+                if product is None:
+                    raise HTTPException(status_code=404, detail="商品不存在")
+                reserved = product.get("reserved", 0)
+                if reserved < cart_item["quantity"] or product["stock"] < cart_item["quantity"]:
+                    raise HTTPException(status_code=400, detail="库存不足")
+                subtotal += cart_item["quantity"] * cart_item["price"]
 
-    discount = 0.0
-    if order.promotion_id and order.promotion_id in promotions_db:
-        promo = promotions_db[order.promotion_id]
-        if subtotal >= promo["min_amount"]:
-            if promo["discount_type"] == "percentage":
-                discount = subtotal * (promo["discount_value"] / 100)
-            elif promo["discount_type"] == "fixed":
-                discount = min(promo["discount_value"], subtotal)
+            discount = 0.0
+            if order.promotion_id and order.promotion_id in promotions_db:
+                promo = promotions_db[order.promotion_id]
+                if subtotal >= promo["min_amount"]:
+                    if promo["discount_type"] == "percentage":
+                        discount = subtotal * (promo["discount_value"] / 100)
+                    elif promo["discount_type"] == "fixed":
+                        discount = min(promo["discount_value"], subtotal)
 
-    total = max(subtotal - discount, 0)
-    global order_counter
-    order_id = order_counter
-    order_counter += 1
-    new_order = {
-        "id": order_id,
-        "user_id": order.user_id,
-        "items": cart["items"].copy(),
-        "subtotal": subtotal,
-        "discount": discount,
-        "total": total,
-        "status": "pending",
-        "created_at": datetime.utcnow().isoformat()
-    }
+            total = max(subtotal - discount, 0)
+            # 扣减库存
+            for cart_item in cart["items"]:
+                product = products_db[cart_item["product_id"]]
+                product["stock"] -= cart_item["quantity"]
+                product["reserved"] = max(product.get("reserved", 0) - cart_item["quantity"], 0)
 
-    orders_db[order_id] = new_order
-    # 清空购物车
-    carts_db[order.user_id] = {"user_id": order.user_id, "items": []}
-    return new_order
+            global order_counter
+            order_id = order_counter
+            order_counter += 1
+            new_order = {
+                "id": order_id,
+                "user_id": order.user_id,
+                "items": cart["items"].copy(),
+                "subtotal": subtotal,
+                "discount": discount,
+                "total": total,
+                "status": "pending",
+                "created_at": datetime.utcnow().isoformat()
+            }
+
+            orders_db[order_id] = new_order
+            carts_db[order.user_id] = {"user_id": order.user_id, "items": []}
+            return new_order
+        finally:
+            for lock in reversed(locks):
+                lock.release()
 
 
 @app.get("/api/orders/{order_id}")
@@ -376,6 +418,7 @@ def reset_state() -> None:
     products_db.update({pid: product.copy() for pid, product in BASE_PRODUCTS.items()})
     carts_db.clear()
     orders_db.clear()
+    product_locks.clear()
     global order_counter
     order_counter = 1
 
