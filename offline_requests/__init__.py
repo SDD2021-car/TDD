@@ -80,7 +80,7 @@ class Session:
         normalized_params = {key: values[-1] for key, values in query_params.items()}
 
         if parsed_url.path == "/test-dashboard":
-            dashboard_path = Path(__file__).parent.parent / "assets" / "test-dashboard.html"
+            dashboard_path = Path(__file__).parent.parent / "assets" / "test_dashboard.html"
 
             if dashboard_path.exists():
                 return Response(200, dashboard_path.read_text(encoding="utf-8"))

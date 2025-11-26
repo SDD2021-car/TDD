@@ -405,7 +405,7 @@ def _calculate_trace_coverage(results) -> Optional[float]:
     return round(executed_lines / total_lines * 100, 2)
 
 
-@app.get("/test-dashboard")
+@app.get("/test_dashboard")
 def serve_test_dashboard():
     dashboard_path = STATIC_DIR / "test_dashboard.html"
     if dashboard_path.exists():
